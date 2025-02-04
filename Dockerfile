@@ -36,7 +36,3 @@ RUN pip install --upgrade pip && \
 
 # Espone la porta dell'API Flask
 EXPOSE 5002 5003
-
-# Avvia entrambi i server con gunicorn
-CMD gunicorn -w 2 -b 0.0.0.0:5002 server.server:app & \
-    gunicorn -w 2 -b 0.0.0.0:5003 db.db:app
