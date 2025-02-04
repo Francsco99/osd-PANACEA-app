@@ -8,21 +8,23 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-def extract_policy(json_input_path, output_dir, timestamp):
+import logging
+import json
+
+def extract_policy(txt_content):
     """
-    Parses a tabular file with space-separated cells, extracts states and actions,
-    and saves a corresponding JSON file excluding the fields 'action', 'step', and 'sched' from state_data.
+    Parses a tabular text file content (as a string), extracts states and actions,
+    and returns a corresponding JSON structure excluding the fields 'action', 'step', and 'sched'.
 
-    :param json_input_path: Path to the input file.
-    :param output_dir: Output directory for the JSON file.
-    :param timestamp: Timestamp.
+    :param txt_content: Content of the TXT file as a string.
+    :return: Dictionary containing the extracted policy data.
     """
-    logging.info("Parsing TXT policy to JSON...")
+    logging.info("Parsing TXT policy to JSON in memory...")
 
-    with open(json_input_path, 'r') as file:
-        lines = file.readlines()
+    # Split content into lines
+    lines = txt_content.strip().split("\n")
 
-    # Extract column headers from the first line of the file
+    # Extract column headers from the first line
     ELEMENTS = lines[0].strip().split()
 
     # Remove the first line (header) and the last line (final state)
@@ -31,16 +33,16 @@ def extract_policy(json_input_path, output_dir, timestamp):
     states = []
 
     for line in lines:
-        # Skip empty lines
         if not line.strip():
-            continue
+            continue  # Skip empty lines
         
         # Split the line into cells
         cells = line.split()
+        
         # Extract the action within square brackets and remove it
         action = None
         if cells[0].startswith("[") and cells[0].endswith("]"):
-            action = cells[0][1:-1]  # Removes the square brackets
+            action = cells[0][1:-1]  # Removes square brackets
         
         # Map values to their respective elements
         def parse_value(value):
@@ -56,6 +58,7 @@ def extract_policy(json_input_path, output_dir, timestamp):
                 return value
 
         state_data = {ELEMENTS[i]: parse_value(cells[i]) for i in range(len(cells))}
+        
         # Use the value of the `step` field as the `state_id`
         state_id = state_data["step"]
 
@@ -68,17 +71,6 @@ def extract_policy(json_input_path, output_dir, timestamp):
             "optimal_action": action
         })
 
-    # Generate the output JSON file path
-    output_file_name = f"{os.path.splitext(os.path.basename(json_input_path))[0]}_{timestamp}.json"
-    output_path = os.path.join(output_dir, output_file_name)
+    logging.info("Policy successfully parsed into JSON.")
 
-    # Save the data as JSON
-    try:
-        with open(output_path, 'w') as json_file:
-            json.dump({"states": states}, json_file, indent=4)
-        logging.info(f"JSON policy data saved to: {output_path}")
-    except Exception as e:
-        logging.error(f"Failed to save JSON policy data to: {output_path}: {e}")
-        raise
-        
-    return output_path
+    return {"states": states}  # Restituisce direttamente il JSON

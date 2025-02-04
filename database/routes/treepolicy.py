@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from models import db, TreePolicy, Tree, TreesXML, Policy
+from models import db, TreePolicy, TreeJSON, TreeXML, Policy
 
 treepolicy_routes = Blueprint('treepolicy_routes', __name__)
 
@@ -29,8 +29,8 @@ def get_tree_policy(treepolicy_id):
 def create_tree_policy():
     data = request.json
 
-    tree = Tree.query.get(data['tree_id'])
-    treexml = TreesXML.query.get(data['treexml_id'])
+    tree = TreeJSON.query.get(data['tree_id'])
+    treexml = TreeXML.query.get(data['treexml_id'])
     policy = Policy.query.get(data['policy_id'])
 
     if not tree or not treexml or not policy:

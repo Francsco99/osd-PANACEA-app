@@ -4,7 +4,7 @@ import os
 import re
 import string
 import logging
-from datetime impor datetime
+from datetime import datetime
 
 # Configure the logging system
 logging.basicConfig(
@@ -102,59 +102,40 @@ def traverse(node, parent_id=None):
     for child in node.findall('node'):
         traverse(child, current_id)
 
-def parse_tree(xml_input_path, output_dir, timestamp):
+def parse_tree(xml_content):
     """
-    Parses an XML file into a JSON file.
+    Parses an XML string into a JSON structure.
 
     Args:
-        xml_input_path (str): Path to the input XML file.
-        output_dir (str): Folder where the output JSON file will be saved.
+        xml_content (str): Content of the XML file as a string.
 
     Returns:
-        str: Path to the generated JSON file.
+        dict: JSON structure of the parsed XML.
     """
     logging.info("Parsing tree data from XML to JSON...")
+    
     global nodes, edges, node_id
     nodes = []
     edges = []
     node_id = 0
 
-    # Load the XML file
     try:
-        tree = ET.parse(xml_input_path)
+        root = ET.fromstring(xml_content)  # Converte direttamente la stringa XML in un oggetto XML
     except ET.ParseError as e:
-        logging.error(f"Failed to parse XML file {xml_input_path}: {e}")
+        logging.error(f"Failed to parse XML content: {e}")
         raise
 
-    root = tree.getroot()
-
-    # Traverse the children of the root node
+    # Traversing the root node's children
     for child in root.findall('node'):
         traverse(child)  # No `parent_id` passed for the root node
 
-    # Extract XML file name (without path, but with extension)
-    xml_file_name = os.path.basename(xml_input_path)
-
-    # Generate the output file name
-    input_name_without_ext = os.path.splitext(os.path.basename(xml_input_path))[0]
-    output_file_name = f"{input_name_without_ext}_{timestamp}.json"
-    output_file_path = os.path.join(output_dir, output_file_name)
-
-    # Save the tree data to a JSON file
     output_data = {
-        "xml_file_name": xml_file_name,
         "tree": {
             "nodes": nodes,
             "edges": edges
         }
     }
 
-    try:
-        with open(output_file_path, "w") as json_file:
-            json.dump(output_data, json_file, indent=4)
-        logging.info(f"JSON Tree data saved to {output_file_path}")
-    except Exception as e:
-        logging.error(f"Failed to save JSON file {output_file_path}: {e}")
-        raise
-
-    return output_file_path
+    logging.info("XML successfully converted to JSON.")
+    
+    return output_data  # Restituisce il JSON direttamente

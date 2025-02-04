@@ -1,95 +1,87 @@
-import os
 import subprocess
 import logging
+import tempfile
+import os
 
-# Configure the logging system
+# Configure logging
 logging.basicConfig(
-    level=logging.INFO,  # Set the minimum logging level
+    level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-def panacea(xml_file_path, output_dir):
+def panacea(xml_content):
     """
-    Executes the PANACEA tool pipeline, generating PRISM input files, running the main script, 
-    and processing results using PRISM to produce outputs in TXT, DOT, and CSV formats.
+    Executes the PANACEA tool pipeline entirely in memory.
 
     Args:
-        xml_file_path (str): Path to the input XML file.
-        output_dir (str): Directory to save the output files.
+        xml_content (str): Content of the input XML file as a string.
 
     Returns:
-        dict: Paths to the generated TXT, CSV, and DOT files.
+        dict: A dictionary containing the generated PRISM outputs as strings.
     """
-    PRISM_INPUT_DIR = os.path.join(output_dir, "input")
-    PRISM_OUTPUT_TXT = os.path.join(output_dir, "output", "txt")
-    PRISM_OUTPUT_DOT = os.path.join(output_dir, "output", "dot")
-    PRISM_OUTPUT_CSV = os.path.join(output_dir, "output", "csv")
     PANACEA_DIR = "/app/PANACEA"
-
-    # Create directories for output files if they do not exist
-    os.makedirs(PRISM_INPUT_DIR, exist_ok=True)
-    os.makedirs(PRISM_OUTPUT_TXT, exist_ok=True)
-    os.makedirs(PRISM_OUTPUT_DOT, exist_ok=True)
-    os.makedirs(PRISM_OUTPUT_CSV, exist_ok=True)
     
     try:
-        # Check that the XML file exists
-        if not os.path.exists(xml_file_path):
-            raise FileNotFoundError(f"The XML file {xml_file_path} was not found!")
+        # Crea file temporaneo per il contenuto XML
+        with tempfile.NamedTemporaryFile(mode="w+", delete=True, suffix=".xml") as xml_temp:
+            xml_temp.write(xml_content)
+            xml_temp.flush()  # Assicura che il contenuto sia scritto nel file prima di usarlo
 
-        # Derive the base name of the file without the extension
-        file_basename = os.path.splitext(os.path.basename(xml_file_path))[0]
+            file_basename = os.path.splitext(os.path.basename(xml_temp.name))[0]
 
-        # Define paths for output files
-        prism_input_path = os.path.join(PRISM_INPUT_DIR, f"{file_basename}.prism")
-        txt_path = os.path.join(PRISM_OUTPUT_TXT, f"{file_basename}.txt")
-        strategy_dot_path = os.path.join(PRISM_OUTPUT_DOT, f"{file_basename}.dot")
-        results_csv_path = os.path.join(PRISM_OUTPUT_CSV, f"{file_basename}.csv")
+            # File temporanei per i risultati di PRISM
+            with tempfile.NamedTemporaryFile(mode="r", delete=True, suffix=".prism") as prism_temp, \
+                 tempfile.NamedTemporaryFile(mode="r", delete=True, suffix=".txt") as txt_temp, \
+                 tempfile.NamedTemporaryFile(mode="r", delete=True, suffix=".csv") as csv_temp, \
+                 tempfile.NamedTemporaryFile(mode="r", delete=True, suffix=".dot") as dot_temp:
 
-        try:
+                try:
+                    # Esegui main.py per generare il file PRISM
+                    logging.info("Running main.py script in memory...")
+                    main_script_path = os.path.join(PANACEA_DIR, "main.py")
+                    subprocess.run(
+                        f"python {main_script_path} --input {xml_temp.name} --output {prism_temp.name}",
+                        shell=True,
+                        check=True,
+                        executable="/bin/bash"
+                    )
+                    logging.info("main.py script executed successfully.")
 
-            # 1. Run the main.py script
-            logging.info("Running main.py script...")
-            main_script_path = os.path.join(PANACEA_DIR, "main.py")
-            subprocess.run(
-                f"python {main_script_path} --input {xml_file_path} --output {prism_input_path}",
-                shell=True,
-                check=True,
-                executable="/bin/bash"
-            )
-            logging.info("main.py script executed.")
+                    # Esegui PRISM
+                    logging.info("Executing PRISM in memory...")
+                    prism_script_path = os.path.join(PANACEA_DIR, "prism-games-3.2.1-linux64-x86/bin/prism")
+                    prism_props_path = os.path.join(PANACEA_DIR, "properties.props")
+                    subprocess.run(
+                        f"{prism_script_path} {prism_temp.name} {prism_props_path} -prop 1 "
+                        f"-simpath 'deadlock' {txt_temp.name} "
+                        f"-exportresults {csv_temp.name}:csv -exportstrat {dot_temp.name}",
+                        shell=True,
+                        check=True,
+                        executable="/bin/bash"
+                    )
+                    logging.info("PRISM executed successfully.")
 
-            # 3. Execute PRISM
-            logging.info("Executing PRISM...")
-            prism_script_path = os.path.join(PANACEA_DIR, "prism-games-3.2.1-linux64-x86/bin/prism")
-            prism_props_path = os.path.join(PANACEA_DIR, "properties.props")
-            subprocess.run(
-                f"{prism_script_path} {prism_input_path} {prism_props_path} -prop 1 "
-                f"-simpath 'deadlock' {txt_path} "
-                f"-exportresults {results_csv_path}:csv -exportstrat {strategy_dot_path}",
-                shell=True,
-                check=True,
-                executable="/bin/bash"
-            )
-            logging.info("PRISM executed.")
+                    # Legge i contenuti dei file generati
+                    txt_temp.seek(0)
+                    csv_temp.seek(0)
+                    dot_temp.seek(0)
 
-        except subprocess.CalledProcessError as e:
-            logging.error(f"Error during command execution: {e}")
-            raise
+                    txt_content = txt_temp.read()
+                    csv_content = csv_temp.read()
+                    dot_content = dot_temp.read()
 
-        logging.info(f"Output successfully generated in the following locations:\n"
-              f"- TXT: {txt_path}\n"
-              f"- CSV: {results_csv_path}\n"
-              f"- DOT: {strategy_dot_path}\n")
+                except subprocess.CalledProcessError as e:
+                    logging.error(f"Error during command execution: {e}")
+                    raise RuntimeError(f"Command execution failed: {e}")
+
+        logging.info("Panacea completed successfully.")
+
         return {
-            "txt_path": txt_path,
-            "csv_path": results_csv_path,
-            "dot_path": strategy_dot_path
+            "txt_content": txt_content,
+            "csv_content": csv_content,
+            "dot_content": dot_content
         }
 
-    except subprocess.CalledProcessError as e:
-        logging.error(f"Command execution failed: {e}")
-        raise RuntimeError(f"Command execution failed: {e}")
     except Exception as e:
         logging.error(f"Error: {e}")
         raise RuntimeError(f"Error: {e}")
