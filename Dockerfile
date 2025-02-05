@@ -38,4 +38,6 @@ RUN pip install --upgrade pip && \
 EXPOSE 5002 5003
 
 # Comando per avviare entrambi i server in background
-CMD ["sh", "-c", "gunicorn --chdir /app/server -b 0.0.0.0:5002 server:app & gunicorn --chdir /app/database -b 0.0.0.0:5003 db:app"]
+# Avvia entrambi i servizi Flask con Gunicorn in background
+CMD gunicorn --chdir /app/server -b 0.0.0.0:5002 server:app & \
+    gunicorn --chdir /app/database -b 0.0.0.0:5003 db:app && wait
