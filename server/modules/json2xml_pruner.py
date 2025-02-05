@@ -1,72 +1,57 @@
 import json
 import xml.etree.ElementTree as ET
-import os
 import logging
 
-# Configure the logging system
+# Configure logging
 logging.basicConfig(
-    level=logging.INFO,  # Set the minimum logging level
+    level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-def get_hidden_labels(json_file):
+def get_hidden_labels(json_content):
     """
-    Reads the JSON file and returns the labels of nodes with hidden=true.
+    Extracts the labels of nodes marked as hidden from the JSON content.
 
     Args:
-        json_file (str): Path to the input JSON file.
+        json_content (dict): JSON content as a dictionary.
 
     Returns:
         list: A list of labels for nodes marked as hidden.
     """
     try:
-        with open(json_file, "r") as file:
-            data = json.load(file)
-        # Extract the labels of nodes with hidden=true
         hidden_labels = [
             node["label"]
-            for node in data["tree"]["nodes"]
+            for node in json_content["tree"]["nodes"]
             if node.get("hidden") is True
         ]
         logging.info(f"Hidden labels extracted: {hidden_labels}")
         return hidden_labels
     except Exception as e:
-        logging.error(f"Failed to read JSON file {json_file}: {e}")
+        logging.error(f"Failed to parse JSON content: {e}")
         raise
 
-def remove_subtrees_from_xml(xml_file, hidden_labels, output_file):
+def remove_subtrees_from_xml(xml_content, hidden_labels):
     """
     Removes subtrees from the XML based on the specified labels.
 
     Args:
-        xml_file (str): Path to the input XML file.
+        xml_content (str): XML content as a string.
         hidden_labels (list): A list of labels for nodes to remove.
-        output_file (str): Path to save the pruned XML file.
+
+    Returns:
+        str: The pruned XML content as a string.
     """
     try:
-        tree = ET.parse(xml_file)
+        tree = ET.ElementTree(ET.fromstring(xml_content))
         root = tree.getroot()
 
         def should_remove(node):
-            """
-            Checks if a node should be removed based on its label.
-
-            Args:
-                node (Element): An XML node.
-
-            Returns:
-                bool: True if the node should be removed, False otherwise.
-            """
+            """Checks if a node should be removed based on its label."""
             label_element = node.find("label")
             return label_element is not None and label_element.text in hidden_labels
 
         def remove_nodes(parent):
-            """
-            Recursively removes child nodes from a parent node.
-
-            Args:
-                parent (Element): The parent XML node.
-            """
+            """Recursively removes matching nodes from the XML tree."""
             for child in list(parent):
                 if should_remove(child):
                     logging.info(f"Removing node with label: {child.find('label').text}")
@@ -74,44 +59,35 @@ def remove_subtrees_from_xml(xml_file, hidden_labels, output_file):
                 else:
                     remove_nodes(child)
 
-        # Remove nodes with the specified labels
         remove_nodes(root)
 
-        # Save the updated XML file
-        tree.write(output_file, encoding="utf-8", xml_declaration=True)
-        logging.info(f"Pruned XML file saved to: {output_file}")
+        # Convert the modified XML tree back to a string
+        return ET.tostring(root, encoding="unicode")
+
     except Exception as e:
-        logging.error(f"Failed to process XML file {xml_file}: {e}")
+        logging.error(f"Failed to process XML content: {e}")
         raise
 
-def prune_tree(json_input_file, xml_input_file, output_folder):
+def prune_tree(json_content, xml_content):
     """
-    Prunes an XML tree by removing subtrees specified in the JSON file.
+    Prunes an XML tree by removing subtrees specified in the JSON content.
 
     Args:
-        json_input_file (str): Path to the input JSON file.
-        xml_input_file (str): Path to the input XML file.
-        output_folder (str): Directory to save the pruned XML file.
+        json_content (dict): JSON content as a dictionary.
+        xml_content (str): XML content as a string.
 
     Returns:
-        str: Path to the generated pruned XML file.
+        str: The pruned XML content as a string.
     """
     try:
-        # Get the labels of nodes to remove
-        logging.info("Reading hidden labels from JSON file...")
-        hidden_labels = get_hidden_labels(json_input_file)
+        logging.info("Extracting hidden labels from JSON content...")
+        hidden_labels = get_hidden_labels(json_content)
 
-        # Generate the name of the output file
-        input_name_without_ext = os.path.splitext(os.path.basename(json_input_file))[0]
-        pruned_file_name = f"{input_name_without_ext}_pruned.xml"
-        xml_output_file = os.path.join(output_folder, pruned_file_name)
+        logging.info("Pruning XML tree using extracted labels...")
+        pruned_xml = remove_subtrees_from_xml(xml_content, hidden_labels)
 
-        logging.info(f"Pruning XML tree using labels: {hidden_labels}")
-
-        # Remove the specified subtrees
-        remove_subtrees_from_xml(xml_input_file, hidden_labels, xml_output_file)
-
-        return xml_output_file
+        logging.info("Pruned XML tree successfully generated.")
+        return pruned_xml
     except Exception as e:
         logging.error(f"Failed to prune tree: {e}")
         raise

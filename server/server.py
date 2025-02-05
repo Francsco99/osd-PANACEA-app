@@ -26,7 +26,7 @@ DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:postgres@databas
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-db = SQLAlchemy(app)
+db.init_app(app)
 
 # Configure the logging system
 logging.basicConfig(
@@ -34,141 +34,99 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# Directory configuration
-BASE_DIR = "server"
-DATA_DIR = os.path.join(BASE_DIR,"data")
-JSON_FOLDER = os.path.join(DATA_DIR, "json")
-XML_FOLDER = os.path.join(DATA_DIR, "xml")
-PRISM_OUTPUT_DIR = os.path.join(DATA_DIR, "prism")
-
-JSON_RECEIVED_FILES_DIR = os.path.join(JSON_FOLDER, "received_trees")
-XML_RECEIVED_FILES_DIR = os.path.join(XML_FOLDER, "received_trees")
-
-PRUNED_FILES_DIR = os.path.join(XML_FOLDER, "pruned_trees")
-
-PARSED_FILES_DIR = os.path.join(JSON_FOLDER, "parsed_trees")
-
-POLICIES_DIR = os.path.join(JSON_FOLDER, "parsed_policies")
-
-XML_BASE_TREE = None
-
-# Create directories if they do not exist
-os.makedirs(DATA_DIR, exist_ok=True)
-os.makedirs(JSON_FOLDER, exist_ok=True)
-os.makedirs(XML_FOLDER, exist_ok=True)
-
-os.makedirs(JSON_RECEIVED_FILES_DIR, exist_ok=True)
-os.makedirs(XML_RECEIVED_FILES_DIR, exist_ok=True)
-
-os.makedirs(PRUNED_FILES_DIR, exist_ok=True)
-
-os.makedirs(PARSED_FILES_DIR, exist_ok=True)
-
-os.makedirs(POLICIES_DIR, exist_ok=True)
-
-os.makedirs(PRISM_OUTPUT_DIR, exist_ok=True)
-
-def find_matching_xml(original_name):
-    """
-    Trova il file XML corrispondente nella cartella XML_RECEIVED_FILES_DIR 
-    basandosi sul nome originale fornito, che termina sicuramente con .xml.
-    
-    Args:
-        original_name (str): Nome del file con estensione .xml (es. "documento.xml").
-    
-    Returns:
-        str: Percorso completo del file XML corrispondente, se trovato.
-        None: Se nessuna corrispondenza viene trovata.
-    """
-    base_name = os.path.splitext(original_name)[0]  # Rimuove l'estensione .xml
-
-    # Cerca un file XML che inizia con lo stesso nome di base
-    for file in os.listdir(XML_RECEIVED_FILES_DIR):
-        if file.startswith(base_name) and file.endswith('.xml'):
-            return os.path.join(XML_RECEIVED_FILES_DIR, file)  # Ritorna il percorso completo del file XML trovato
-
-    return None  # Nessuna corrispondenza trovata
-
 @app.route('/receive_json', methods=['POST'])
 def receive_json():
     """
     Endpoint per ricevere JSON, trovare l'XML corrispondente e processare il file.
     """
     try:
-        # Riceve il JSON dal client
+        # Receive JSON string from client
         data = request.get_json()
         if not data:
             return jsonify({"message": "No data received"}), 400
 
-        # Estrae il nome originale fornito dal JSON
-        original_name = data.get("original_name")
-        if not original_name:
-            return jsonify({"error": "Original name not provided"}), 400
+        # Extract original JSON tree id
+        tree_id = data.get("tree_id")
+        if not tree_id:
+            return jsonify({"error": "Missing tree_id"}), 400
 
-        # Genera un timestamp
+        # Extract filename
+        file_name = data.get("file_name")
+        if not file_name:
+            return jsonify({"error": "Missing file_name"}), 400
+
+        logging.info(f"Processing JSON for Tree ID: {tree_id}")
+        with db.session.begin():
+            # Find treesxml_id in TreePolicy table
+            tree_policy_entry = TreePolicy.query.filter_by(tree_id = tree_id).first()
+            if not tree_policy_entry:
+                return jsonify({"error": "No matching TreePolicy found"})
+            
+            treesxml_id = tree_policy_entry.treexml_id
+            logging.info(f"Found associated TreeXML ID: {treesxml_id}")
+            
+            # Get XML content from TreeXML table
+            tree_xml_entry = TreeXML.query.get(treesxml_id)
+            xml_base_tree = tree_xml_entry.content
+
+            logging.info("XML loaded from DB")
+        db.session.commit()
+
+        # Remove tree_id and file_name from JSON before saving
+        json_tree_content = {k: v for k, v in data.items() if k not in ["tree_id", "file_name"]}
+
+        # Prune XML tree
+        pruned_xml = prune_tree(json_tree_content, xml_base_tree)
+
+        # Execute panacea on pruned tree
+        panacea_output=panacea(pruned_xml)
+
+        # Extract txt content from PANACEA output
+        txt_content = panacea_output["txt_content"]
+
+        # Invoke parse_tree to convert the XML file to JSON
+        json_policy_content = extract_policy(txt_content)
+        
+        # Generate timestamp
         timestamp = datetime.now().strftime("%y%m%d_%H%M")
 
-        # Costruisce il nome del file JSON con timestamp
-        filename = f"{os.path.splitext(original_name)[0]}_{timestamp}.json"
-        received_file_path = os.path.join(JSON_RECEIVED_FILES_DIR, filename)
+        with db.session.begin():
+            # Save JSON tree data inside db (table trees)
+            json_record = TreeJSON(name=f"{file_name}_{timestamp}.json",content=json_tree_content)
+            db.session.add(json_record)
+            db.session.flush()
+            logging.info(f"New JSON tree saved with ID: {json_record.id}")
 
-        # Salva il JSON nel filesystem
-        try:
-            with open(received_file_path, "w") as f:
-                json.dump(data, f, indent=4)
-            logging.info(f"JSON file received and saved at: {received_file_path}")
-        except Exception as e:
-            logging.error(f"Failed to save JSON file {filename}: {e}")
-            raise
-        
-        # Recupera il nome dell'albero originale dal json
-        xml_base_tree_name = data.get("xml_file_name")
+            # Save JSON policy data inside db (table policies)
+            policy_record = Policy(name=f"{file_name}_policy_{timestamp}.json", content=json_policy_content)
+            db.session.add(policy_record)
+            db.session.flush()
+            logging.info(f"New Policy saved with ID: {policy_record.id}")
 
-        # Trova il file XML corrispondente
-        xml_base_tree_path = find_matching_xml(original_name)
+            # Update TreePoliocy with new JSON and Policy
+            new_tree_policy_entry = TreePolicy(
+                tree_id=json_record.id,
+                treexml_id=treesxml_id,
+                policy_id=policy_record.id
+            )
+            db.session.add(new_tree_policy_entry)
+            db.session.flush()
+            logging.info(f"Updated TreePolicy with new JSON and Policy.")
 
-        if not xml_base_tree_path:
-            return jsonify({"error": "No matching XML file found"}), 400
+        db.session.commit()
 
-        logging.info(f"Matching XML file selected: {xml_base_tree_path}")
-
-        # Esegui prune_tree con il file XML trovato
-        pruned_xml_path = prune_tree(
-            json_input_file=received_file_path,
-            xml_input_file=xml_base_tree_path,
-            output_folder=PRUNED_FILES_DIR
-        )
-
-        # Esegui PANACEA
-        panacea_output = panacea(pruned_xml_path, PRISM_OUTPUT_DIR)
-        
-        # Ottieni il percorso del file TXT generato da PRISM
-        txt_file_path = panacea_output["txt_path"]
-
-        # Invoke the parsing script to convert the TXT to JSON containing the policy
-        policy_path = extract_policy(
-            json_input_path=txt_file_path, 
-            output_dir=POLICIES_DIR,
-            timestamp=timestamp)
-
-        # Leggi il contenuto della policy
-        with open(policy_path, "r") as f:
-            policy_content = json.load(f)
-
-        # Restituisci il JSON ricevuto e la policy generata
-        response = jsonify({
+        response_data = {
             "message": "File processed successfully",
-            "file_name": filename,
-            "tree_data": data,
-            "policy_content": policy_content  # Policy content
-        })
-        response.headers['Content-Type'] = 'application/json'
-        return response, 200
-    except Exception as e:
-        # Log degli errori
-        logging.error(f"Error: {e}")
-        return jsonify({"error": str(e)}), 500
+            "tree_json_id": json_record.id,
+            "policy_json_id": policy_record.id
+        }
 
+        return jsonify(response_data), 200
+
+    except Exception as e:
+        db.session.rollback()
+        logging.error(f"Error processing JSON: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/receive_xml', methods=['POST'])
 def receive_xml():
